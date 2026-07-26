@@ -2,7 +2,8 @@
 # transcribe.sh
 # 功能：音檔逐字轉錄的固定流程單一進入點。自動偵測執行環境：
 #         - 不在 agy／gemini 上（如 Claude Code、Codex、Copilot）：呼叫 `agy -p` 非互動指令，
-#           由 Gemini 原生多模態音訊理解轉錄，逐字稿寫入輸出檔，stdout 只印該檔絕對路徑。
+#           由 Gemini 原生多模態音訊理解轉錄並「自行把逐字稿寫入輸出檔」，agy 回覆只給路徑；
+#           本腳本 stdout 也只印該檔絕對路徑。
 #         - 已在 agy／gemini 上（原生具備音訊理解）：不遞迴呼叫 agy，改印出「請直接原生轉錄並寫檔」
 #           指示、canonical prompt 與目標輸出檔路徑，交由當前代理轉錄後寫檔、只回傳路徑。
 # 用法：sh transcribe.sh <音檔絕對路徑> [模型] [輸出檔路徑]
@@ -13,10 +14,12 @@
 #                 （或環境變數 TRANSCRIPT_OUT）。相對路徑會相對音檔目錄解析。
 # 偵測依據：ANTIGRAVITY_CONVERSATION_ID 非空 → 判定「已在 agy／gemini 執行」（實測 agy run_command
 #           子行程會帶此變數）。
-# 產出：delegate 分支寫輸出檔並在 stdout 印其絕對路徑；native 分支於 stderr 印指示 + prompt + 目標路徑。
+# 產出：delegate 分支由 agy 寫輸出檔，本腳本驗證後於 stdout 印其絕對路徑；
+#       native 分支於 stderr 印指示 + prompt + 目標路徑。
 # 環境變數：AGY_MODEL 覆寫預設模型；TRANSCRIPT_OUT 覆寫預設輸出檔。
 # 結束碼：0 成功（delegate 已寫檔）；2 參數／檔案錯誤；3 已在 agy 上，需由代理原生轉錄並寫檔；
-#         4 找不到 agy；其他為 agy 的結束碼（如 124 逾時；此時不寫輸出檔）。
+#         4 找不到 agy；5 agy 結束但輸出檔缺漏或為空（保留 agy 日誌供查）；
+#         其他為 agy 的結束碼（如 124 逾時）。
 set -eu
 
 MODEL_DEFAULT="${AGY_MODEL:-gemini-3.6-flash-high}"
@@ -57,13 +60,17 @@ if [ ! -d "$OUT_DIR" ]; then
 	printf '錯誤：輸出目錄不存在：%s\n' "$OUT_DIR" >&2
 	exit 2
 fi
+OUT_DIR=$(cd "$OUT_DIR" && pwd)
+OUT="$OUT_DIR/$(basename "$OUT")"
 
 # canonical prompt：以 printf 帶入路徑（%s 為獨立參數），避免 bash 3.2 變數展開緊接全形字元遺失位元組
 build_prompt() {
-	printf '%s%s%s' \
+	printf '%s%s%s%s%s' \
 		'請直接使用你自己的多模態原生音訊理解能力，完整轉錄以下音檔為逐字稿。不要嘗試呼叫 whisper、ffmpeg 分析或任何外部語音轉文字工具，直接把音檔本身讀進來聽並轉寫。音檔路徑：' \
 		"$AUDIO" \
-		'。請完整逐字轉錄，不要摘要、不要省略，並在每段開頭標註講者與時間戳 [MM:SS]。'
+		'。請完整逐字轉錄，不要摘要、不要省略，並在每段開頭標註講者與時間戳 [MM:SS]。轉錄完成後，請用你的檔案寫入工具把逐字稿完整寫入這個檔案（若已存在就覆寫）：' \
+		"$OUT" \
+		'。你的最終回覆只要輸出該檔案的絕對路徑一行，不要在回覆裡輸出逐字稿內容、不要附加說明或摘要。'
 }
 
 # --- native 分支：已在 agy／gemini 上，交還給代理原生轉錄並寫檔，不遞迴 ---
@@ -87,22 +94,43 @@ if ! command -v agy >/dev/null 2>&1; then
 fi
 
 PROMPT=$(build_prompt)
-TMP_OUT="$OUT.partial.$$"
+LOG="$OUT.agy.$$.log"
+
+# 舊逐字稿先移開，才能確認 OUT 確實由本次 agy 產生（不靠 mtime，避免同秒誤判）
+BACKUP=""
+if [ -e "$OUT" ]; then
+	BACKUP="$OUT.bak.$$"
+	mv "$OUT" "$BACKUP"
+fi
 
 set +e
 agy -p "$PROMPT" \
 	--model "$MODEL" \
 	--add-dir "$AUDIO_DIR" \
 	--dangerously-skip-permissions \
-	> "$TMP_OUT"
+	> "$LOG" 2>&1
 STATUS=$?
 set -e
 
+restore_backup() {
+	[ -n "$BACKUP" ] || return 0
+	[ -e "$OUT" ] || mv "$BACKUP" "$OUT"
+	rm -f "$BACKUP"
+}
+
 if [ "$STATUS" -ne 0 ]; then
-	rm -f "$TMP_OUT"
-	printf 'agy 轉錄失敗（結束碼 %s），未寫輸出檔。\n' "$STATUS" >&2
+	restore_backup
+	printf 'agy 轉錄失敗（結束碼 %s），日誌：%s\n' "$STATUS" "$LOG" >&2
 	exit "$STATUS"
 fi
 
-mv "$TMP_OUT" "$OUT"
+# agy 應自行寫檔；此處只驗證本次確實產出非空逐字稿
+if [ ! -s "$OUT" ]; then
+	rm -f "$OUT"
+	restore_backup
+	printf '錯誤：agy 結束但未寫出逐字稿檔案（或內容為空）：%s\n保留 agy 日誌供查：%s\n' "$OUT" "$LOG" >&2
+	exit 5
+fi
+
+rm -f "$LOG" ${BACKUP:+"$BACKUP"}
 printf '%s\n' "$OUT"

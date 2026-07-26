@@ -6,7 +6,7 @@
 
 單一進入點 `scripts/transcribe.sh` 會自動偵測執行環境：
 
-- **不在 agy／gemini 上**（Claude Code、Codex、Copilot…）：委派給 `agy -p` 非互動指令，由 Gemini 原生音訊理解轉錄。
+- **不在 agy／gemini 上**（Claude Code、Codex、Copilot…）：委派給 `agy -p` 非互動指令，由 Gemini 原生音訊理解轉錄，並要求 agy **自行把逐字稿寫入輸出檔、回覆只給路徑一行**（逐字稿內容不經 agy 回覆與 stdout，省 token）。腳本會驗證輸出檔確實由本次執行產生且非空。
 - **已在 agy／gemini 上**：不遞迴呼叫 agy，改交由當前代理直接用原生音訊理解轉錄。
 
 偵測依據為 `ANTIGRAVITY_CONVERSATION_ID` 環境變數（agy 執行 `run_command` 時的子行程會帶此變數）。
@@ -39,11 +39,12 @@ sh ~/.claude/skills/audio-transcribe/scripts/transcribe.sh <音檔絕對路徑> 
 
 | 碼 | 意義 |
 |---|---|
-| 0 | delegate 成功，逐字稿已寫入輸出檔，stdout 為該檔絕對路徑 |
+| 0 | delegate 成功，逐字稿已由 agy 寫入輸出檔，stdout 為該檔絕對路徑 |
 | 2 | 參數／檔案錯誤 |
 | 3 | 已在 agy 上，交由代理原生轉錄並寫檔、只回傳路徑 |
 | 4 | 找不到 agy |
-| 其他 | agy 的結束碼（如 124 逾時）；此時不寫輸出檔 |
+| 5 | agy 結束但未寫出逐字稿（或內容為空）；保留 `<輸出檔>.agy.<pid>.log` 供查，舊逐字稿會還原 |
+| 其他 | agy 的結束碼（如 124 逾時）；此時保留舊輸出檔與 agy 日誌 |
 
 ## 授權
 

@@ -1,7 +1,7 @@
 ---
 name: audio-transcribe
-description: 用 Gemini 原生多模態音訊理解，把音檔完整轉錄為逐字稿（含講者與 [MM:SS] 時間戳），不摘要不省略。逐字稿寫入檔案，只回傳檔案路徑。若當前代理本身沒有原生音訊理解（如 Claude Code、Codex、Copilot），會自動委派給 `agy -p` 非互動指令；若已在 agy／gemini 上執行則直接原生轉錄。觸發詞：轉錄、逐字稿、轉逐字、聽打、音檔轉文字、transcribe、audio transcript、把錄音轉成文字。
-version: 1.2.0
+description: 用 Gemini 原生多模態音訊理解，把音檔完整轉錄為逐字稿（含講者與 [MM:SS] 時間戳），不摘要不省略。逐字稿寫入檔案，只回傳檔案路徑。若當前代理本身沒有原生音訊理解（如 Claude Code、Codex、Copilot），會自動委派給 `agy -p` 非互動指令；若已在 agy／gemini 上執行則直接原生轉錄。另附逐字稿轉 SRT 字幕腳本。觸發詞：轉錄、逐字稿、轉逐字、聽打、音檔轉文字、transcribe、audio transcript、把錄音轉成文字、轉字幕、SRT、字幕檔。
+version: 1.3.0
 author: LazyJerry
 ---
 
@@ -55,3 +55,17 @@ sh <SKILL_DIR>/scripts/transcribe.sh <音檔絕對路徑> [模型] [輸出檔路
 ```
 
 完整逐字，不摘要、不省略。
+
+## 轉字幕（選用）
+
+使用者要 SRT 字幕時，把上一步的逐字稿丟給：
+
+```bash
+sh <SKILL_DIR>/scripts/transcript-to-srt.sh <逐字稿絕對路徑> [輸出 srt 路徑] [媒體總長秒數]
+```
+
+- 輸出預設 `<逐字稿同目錄>/<主檔名去掉 .transcript>.srt`；stdout 只印該檔絕對路徑。
+- 每句結束時間 = min(下一句起始, 起始 + `MAX_CUE`)，`MAX_CUE` 預設 15 秒，避免長靜音產生超長字幕。
+- 給第三參數（媒體總長秒數）可讓最後一句結束在實際片尾。
+- 逐字稿只有單一講者時自動移除講者前綴；多講者則保留。
+- 結束碼：0 成功；2 參數／檔案錯誤；3 逐字稿中找不到任何可解析的時間戳行。

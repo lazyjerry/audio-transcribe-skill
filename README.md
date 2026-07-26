@@ -30,6 +30,18 @@ sh ~/.claude/skills/audio-transcribe/scripts/transcribe.sh <音檔絕對路徑> 
 
 在 Claude Code 中，說「幫我把這個音檔轉逐字稿」即可觸發此 Skill。
 
+### 轉 SRT 字幕（選用）
+
+```bash
+sh ~/.claude/skills/audio-transcribe/scripts/transcript-to-srt.sh <逐字稿絕對路徑> [輸出 srt 路徑] [媒體總長秒數]
+```
+
+- 輸出預設 `<逐字稿同目錄>/<主檔名去掉 .transcript>.srt`，stdout 只印該檔絕對路徑。
+- 每句結束時間 = min(下一句起始, 起始 + `MAX_CUE`)，`MAX_CUE` 預設 15 秒，避免長靜音段變成超長字幕。
+- 第三參數給媒體總長秒數，可讓最後一句結束在實際片尾。
+- 單一講者自動移除講者前綴，多講者保留。
+- 結束碼：0 成功；2 參數／檔案錯誤；3 找不到可解析的時間戳行。
+
 ## 依賴
 
 - delegate 分支需已安裝並登入 [Antigravity CLI](https://antigravity.google)（`agy`；`gemini` 多為其 alias）。
